@@ -95,6 +95,9 @@ pipeline {
                 if [ "$LIVE" != none ]; then
                     kubectl -n "$NS" patch service shopease-live \
                         -p "{\\"spec\\":{\\"selector\\":{\\"app\\":\\"shopease\\",\\"color\\":\\"$LIVE\\"}}}"
+                    if [ "$ROLLBACK_ONLY" != true ]; then
+                        kubectl -n "$NS" rollout undo "deployment/shopease-$IDLE" || true
+                    fi
                     kubectl -n "$NS" scale "deployment/shopease-$IDLE" --replicas=0
                 fi
                 curl -fsS http://localhost:30081/version || true
