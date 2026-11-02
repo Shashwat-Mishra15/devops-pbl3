@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const crypto = require('crypto');
 const { createApp, maskName } = require('../src/app');
+const { encrypt, decrypt } = require('../src/crypto');
 
 const apiToken = crypto.randomBytes(16).toString('hex');
 const encryptionKey = crypto.randomBytes(32).toString('hex');
@@ -66,4 +67,11 @@ test('refuses to start without secrets', () => {
 
 test('masks names', () => {
   assert.strictEqual(maskName('Asha Verma'), 'A*** V***');
+});
+
+test('rejects ciphertext with a truncated authentication tag', () => {
+  const key = crypto.randomBytes(32);
+  const [iv, tag, data] = encrypt('Type 2 diabetes', key).split('.');
+  const shortTag = Buffer.from(tag, 'base64').subarray(0, 4).toString('base64');
+  assert.throws(() => decrypt([iv, shortTag, data].join('.'), key));
 });
