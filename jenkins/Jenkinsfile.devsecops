@@ -12,7 +12,7 @@ pipeline {
         AWS_REGION = 'us-east-1'
         APP = 'medicare'
         NS = 'medicare'
-        TRIVY = 'docker run --rm -v trivy-cache:/root/.cache -v /var/run/docker.sock:/var/run/docker.sock -v $WORKSPACE:/src -w /src aquasec/trivy:0.58.1'
+        TRIVY = "docker run --rm -v trivy-cache:/root/.cache -v /var/run/docker.sock:/var/run/docker.sock -v ${env.WORKSPACE}:/src -w /src aquasec/trivy:0.58.1"
     }
     stages {
         stage('Prepare') {
