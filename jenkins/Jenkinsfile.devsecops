@@ -1,0 +1,140 @@
+// Project 9: DevSecOps pipeline for the MediCare healthcare portal
+pipeline {
+    agent any
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
+    parameters {
+        booleanParam(name: 'INJECT_VULNERABLE_DEPENDENCY', defaultValue: false, description: 'Add a known vulnerable library, to prove the security gate blocks the release')
+    }
+    environment {
+        AWS_REGION = 'us-east-1'
+        APP = 'medicare'
+        NS = 'medicare'
+        TRIVY = 'docker run --rm -v trivy-cache:/root/.cache -v /var/run/docker.sock:/var/run/docker.sock -v $WORKSPACE:/src -w /src aquasec/trivy:0.58.1'
+    }
+    stages {
+        stage('Prepare') {
+            steps {
+                sh '''
+                    rm -rf reports || docker run --rm -v "$WORKSPACE:/w" alpine rm -rf /w/reports
+                    mkdir -p reports
+                    chmod 777 reports
+                '''
+                script {
+                    env.REGISTRY = sh(script: 'infra/ecr-prepare.sh "$APP" "$NS"', returnStdout: true).trim()
+                    env.IMAGE = "${env.REGISTRY}/${env.APP}:${env.BUILD_NUMBER}"
+                }
+            }
+        }
+        stage('Secret Scan (Gitleaks)') {
+            steps {
+                sh '''
+                    docker run --rm -v "$WORKSPACE:/repo" zricethezav/gitleaks:v8.21.2 detect --no-git --source /repo \
+                        --report-format json --report-path /repo/reports/gitleaks.json --exit-code 1
+                '''
+            }
+        }
+        stage('Unit Tests') {
+            steps {
+                sh 'docker build --target test -t "$APP:test" medicare'
+            }
+        }
+        stage('SAST (Semgrep)') {
+            steps {
+                sh '''
+                    docker run --rm -e HOME=/tmp -v "$WORKSPACE:/src" -w /src semgrep/semgrep:1.100.0 semgrep scan \
+                        --config p/nodejs --config p/javascript --config p/secrets \
+                        --severity ERROR --error --metrics off --json -o reports/semgrep.json medicare/src
+                '''
+            }
+        }
+        stage('Dependency Scan (Trivy SCA)') {
+            steps {
+                sh '''
+                    if [ "$INJECT_VULNERABLE_DEPENDENCY" = true ]; then
+                        docker run --rm -v "$WORKSPACE/medicare:/app" -w /app node:22-alpine \
+                            sh -c "npm install --package-lock-only --no-audit lodash@4.17.4 && chmod -R a+rwX ."
+                    fi
+                    $TRIVY fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
+                        --format table --output reports/trivy-dependencies.txt medicare
+                '''
+            }
+        }
+        stage('Build Image') {
+            steps {
+                sh 'docker build --target runtime -t "$IMAGE" medicare'
+            }
+        }
+        stage('Image Scan (Trivy)') {
+            steps {
+                sh '''
+                    $TRIVY image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
+                        --format table --output reports/trivy-image.txt "$IMAGE"
+                '''
+            }
+        }
+        stage('Kubernetes and Dockerfile Scan (Trivy Config)') {
+            steps {
+                sh '''
+                    $TRIVY config --severity HIGH,CRITICAL --exit-code 1 \
+                        --format table --output reports/trivy-config.txt k8s/medicare
+                    $TRIVY config --severity HIGH,CRITICAL --exit-code 1 \
+                        --format table --output reports/trivy-dockerfile.txt medicare/Dockerfile
+                '''
+            }
+        }
+        stage('Push Signed-off Image') {
+            steps {
+                sh 'docker push "$IMAGE"'
+            }
+        }
+        stage('Deploy Hardened Workload') {
+            steps {
+                sh '''
+                    set +x
+                    kubectl apply -f k8s/medicare/namespace.yaml -f k8s/medicare/networkpolicy.yaml -f k8s/medicare/service.yaml
+                    if ! kubectl -n "$NS" get secret medicare-secrets >/dev/null 2>&1; then
+                        kubectl -n "$NS" create secret generic medicare-secrets \
+                            --from-literal=api-token="$(openssl rand -hex 24)" \
+                            --from-literal=encryption-key="$(openssl rand -hex 32)"
+                    fi
+                    set -x
+                    sed "s|IMAGE_PLACEHOLDER|$IMAGE|" k8s/medicare/deployment.yaml | kubectl apply -f -
+                    kubectl -n "$NS" rollout status deployment/medicare --timeout=180s
+                '''
+            }
+        }
+        stage('DAST (OWASP ZAP)') {
+            steps {
+                sh '''
+                    code=0
+                    docker run --rm --network host -v "$WORKSPACE/reports:/zap/wrk:rw" ghcr.io/zaproxy/zaproxy:stable \
+                        zap-baseline.py -t http://localhost:30083 -r zap-report.html -J zap-report.json || code=$?
+                    echo "ZAP exit code: $code"
+                    [ "$code" -ne 1 ] && [ "$code" -ne 3 ]
+                '''
+            }
+        }
+        stage('Runtime Security Checks') {
+            steps {
+                sh '''
+                    test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:30083/api/patients/1)" = 401
+                    curl -sI http://localhost:30083/ | grep -i strict-transport-security
+                    curl -sI http://localhost:30083/ | grep -i content-security-policy
+                    POD=$(kubectl -n "$NS" get pod -l app=medicare -o jsonpath='{.items[0].metadata.name}')
+                    test "$(kubectl -n "$NS" exec "$POD" -- id -u)" = 1000
+                    ! kubectl -n "$NS" exec "$POD" -- touch /app/tamper
+                    kubectl -n "$NS" get networkpolicy,deployment,service
+                '''
+            }
+        }
+    }
+    post {
+        always {
+            sh 'docker run --rm -v "$WORKSPACE:/w" alpine sh -c "chmod -R a+rwX /w/reports /w/medicare" || true'
+            archiveArtifacts artifacts: 'reports/**', allowEmptyArchive: true
+        }
+    }
+}

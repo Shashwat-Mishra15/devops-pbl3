@@ -1,0 +1,104 @@
+// Project 8: automated blue-green deployment of ShopEase
+pipeline {
+    agent any
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
+    parameters {
+        booleanParam(name: 'SIMULATE_BAD_RELEASE', defaultValue: false, description: 'Deploy a release that fails its health check, to prove live traffic is protected')
+        booleanParam(name: 'ROLLBACK_ONLY', defaultValue: false, description: 'Skip the build and switch live traffic back to the other colour')
+        booleanParam(name: 'MANUAL_APPROVAL', defaultValue: false, description: 'Wait for a person to approve the traffic switch')
+    }
+    environment {
+        AWS_REGION = 'us-east-1'
+        APP = 'shopease'
+        NS = 'shopease-bg'
+    }
+    stages {
+        stage('Detect Live Colour') {
+            steps {
+                script {
+                    env.REGISTRY = sh(script: 'infra/ecr-prepare.sh "$APP" "$NS"', returnStdout: true).trim()
+                    env.IMAGE = "${env.REGISTRY}/${env.APP}:bg-${env.BUILD_NUMBER}"
+                    env.LIVE = sh(script: 'kubectl -n "$NS" get service shopease-live -o jsonpath="{.spec.selector.color}" 2>/dev/null || echo none', returnStdout: true).trim()
+                    env.IDLE = env.LIVE == 'blue' ? 'green' : 'blue'
+                    echo "Live colour: ${env.LIVE}, target colour: ${env.IDLE}"
+                }
+            }
+        }
+        stage('Build and Push Image') {
+            when { expression { !params.ROLLBACK_ONLY } }
+            steps {
+                sh '''
+                    docker build --target test -t "$APP:test" shopease
+                    docker build --target runtime -t "$IMAGE" shopease
+                    docker push "$IMAGE"
+                '''
+            }
+        }
+        stage('Deploy to Idle Colour') {
+            when { expression { !params.ROLLBACK_ONLY } }
+            steps {
+                sh '''
+                    PREVIOUS="$LIVE"
+                    [ "$PREVIOUS" = none ] && PREVIOUS="$IDLE"
+                    sed -e "s|LIVE_PLACEHOLDER|$PREVIOUS|" -e "s|PREVIEW_PLACEHOLDER|$IDLE|" \
+                        k8s/bluegreen/services.tmpl.yaml | kubectl apply -f -
+                    sed -e "s|COLOR_PLACEHOLDER|$IDLE|g" -e "s|IMAGE_PLACEHOLDER|$IMAGE|" \
+                        -e "s|VERSION_PLACEHOLDER|$BUILD_NUMBER|" -e "s|BAD_PLACEHOLDER|$SIMULATE_BAD_RELEASE|" \
+                        k8s/bluegreen/deployment.tmpl.yaml | kubectl apply -f -
+                    kubectl -n "$NS" rollout status "deployment/shopease-$IDLE" --timeout=90s
+                '''
+            }
+        }
+        stage('Smoke Test Idle Colour') {
+            when { expression { !params.ROLLBACK_ONLY } }
+            steps {
+                sh '''
+                    sleep 3
+                    curl -fsS http://localhost:30082/health
+                    curl -fsS http://localhost:30082/version | grep "\\"color\\":\\"$IDLE\\""
+                '''
+            }
+        }
+        stage('Approve Switch') {
+            when { expression { params.MANUAL_APPROVAL } }
+            steps {
+                input message: "Switch live traffic to ${env.IDLE}?"
+            }
+        }
+        stage('Switch Live Traffic') {
+            steps {
+                sh '''
+                    kubectl -n "$NS" scale "deployment/shopease-$IDLE" --replicas=2
+                    kubectl -n "$NS" rollout status "deployment/shopease-$IDLE" --timeout=90s
+                    kubectl -n "$NS" patch service shopease-live \
+                        -p "{\\"spec\\":{\\"selector\\":{\\"app\\":\\"shopease\\",\\"color\\":\\"$IDLE\\"}}}"
+                '''
+            }
+        }
+        stage('Verify Live') {
+            steps {
+                sh '''
+                    sleep 3
+                    curl -fsS http://localhost:30081/version | grep "\\"color\\":\\"$IDLE\\""
+                    kubectl -n "$NS" get deployment,service -o wide
+                '''
+            }
+        }
+    }
+    post {
+        failure {
+            sh '''
+                kubectl -n "$NS" get service shopease-live -o jsonpath="{.spec.selector.color}" | xargs -I{} echo "Live traffic is on: {}"
+                if [ "$LIVE" != none ]; then
+                    kubectl -n "$NS" patch service shopease-live \
+                        -p "{\\"spec\\":{\\"selector\\":{\\"app\\":\\"shopease\\",\\"color\\":\\"$LIVE\\"}}}"
+                    kubectl -n "$NS" scale "deployment/shopease-$IDLE" --replicas=0
+                fi
+                curl -fsS http://localhost:30081/version || true
+            '''
+        }
+    }
+}

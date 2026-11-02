@@ -1,0 +1,62 @@
+// Project 7: CI/CD pipeline deploying the Dockerized ShopEase app on Kubernetes
+pipeline {
+    agent any
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+    }
+    environment {
+        AWS_REGION = 'us-east-1'
+        APP = 'shopease'
+        NS = 'shopease'
+    }
+    stages {
+        stage('Prepare ECR and Namespace') {
+            steps {
+                script {
+                    env.REGISTRY = sh(script: 'infra/ecr-prepare.sh "$APP" "$NS"', returnStdout: true).trim()
+                    env.IMAGE = "${env.REGISTRY}/${env.APP}:${env.BUILD_NUMBER}"
+                }
+            }
+        }
+        stage('Unit Tests') {
+            steps {
+                sh 'docker build --target test -t "$APP:test" shopease'
+            }
+        }
+        stage('Build Docker Image') {
+            steps {
+                sh 'docker build --target runtime -t "$IMAGE" shopease'
+            }
+        }
+        stage('Push to ECR') {
+            steps {
+                sh 'docker push "$IMAGE"'
+            }
+        }
+        stage('Deploy to Kubernetes') {
+            steps {
+                sh '''
+                    kubectl apply -f k8s/shopease/namespace.yaml -f k8s/shopease/service.yaml
+                    sed -e "s|IMAGE_PLACEHOLDER|$IMAGE|" -e "s|VERSION_PLACEHOLDER|$BUILD_NUMBER|" \
+                        k8s/shopease/deployment.yaml | kubectl apply -f -
+                    kubectl -n "$NS" rollout status deployment/shopease --timeout=180s
+                '''
+            }
+        }
+        stage('Smoke Test') {
+            steps {
+                sh '''
+                    curl -fsS http://localhost:30080/health
+                    curl -fsS http://localhost:30080/version | grep "\\"version\\":\\"$BUILD_NUMBER\\""
+                    kubectl -n "$NS" get deployment,pods,service -o wide
+                '''
+            }
+        }
+    }
+    post {
+        failure {
+            sh 'kubectl -n "$NS" rollout undo deployment/shopease || true'
+        }
+    }
+}

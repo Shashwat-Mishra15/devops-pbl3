@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shopease-COLOR_PLACEHOLDER
+  namespace: shopease-bg
+  labels:
+    app: shopease
+    color: COLOR_PLACEHOLDER
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: shopease
+      color: COLOR_PLACEHOLDER
+  template:
+    metadata:
+      labels:
+        app: shopease
+        color: COLOR_PLACEHOLDER
+    spec:
+      imagePullSecrets:
+        - name: ecr-pull
+      containers:
+        - name: shopease
+          image: IMAGE_PLACEHOLDER
+          ports:
+            - containerPort: 3000
+          env:
+            - name: APP_VERSION
+              value: "VERSION_PLACEHOLDER"
+            - name: DEPLOY_COLOR
+              value: COLOR_PLACEHOLDER
+            - name: SIMULATE_BAD_RELEASE
+              value: "BAD_PLACEHOLDER"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi

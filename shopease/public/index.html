@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ShopEase</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; background: #f4f5f7; color: #1c2430; }
+    header { padding: 20px 32px; color: #fff; background: #1f3a5f; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+    h1 { margin: 0; font-size: 26px; }
+    #badge { padding: 6px 14px; border-radius: 16px; background: #5b6b7f; font-weight: 600; }
+    #badge.blue { background: #1976d2; }
+    #badge.green { background: #2e7d32; }
+    main { padding: 32px; display: grid; gap: 20px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+    .card { padding: 20px; background: #fff; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+    .price { font-size: 20px; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <header><h1>ShopEase</h1><span id="badge">loading</span></header>
+  <main id="products"></main>
+  <script>
+    fetch('/version').then((r) => r.json()).then((v) => {
+      const badge = document.getElementById('badge');
+      badge.textContent = v.color === 'none' ? `Build ${v.version}` : `${v.color.toUpperCase()} · build ${v.version}`;
+      badge.className = v.color;
+    });
+    fetch('/api/products').then((r) => r.json()).then((items) => {
+      document.getElementById('products').innerHTML = items.map((p) =>
+        `<div class="card"><h3>${p.name}</h3><div class="price">₹${p.price}</div><p>${p.stock} in stock</p></div>`).join('');
+    });
+  </script>
+</body>
+</html>

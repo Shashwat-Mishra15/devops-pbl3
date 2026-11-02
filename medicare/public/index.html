@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MediCare Patient Portal</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header><h1>MediCare Patient Portal</h1></header>
+  <main>
+    <h2>Security controls in this release</h2>
+    <ul>
+      <li>Token authentication on every patient record API</li>
+      <li>AES-256-GCM encryption of patient names and diagnoses</li>
+      <li>Audit log with masked patient identifiers</li>
+      <li>Rate limiting, input validation and secure HTTP headers</li>
+      <li>Non-root, read-only container with a default-deny network policy</li>
+    </ul>
+  </main>
+</body>
+</html>
