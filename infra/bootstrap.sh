@@ -36,6 +36,7 @@ cat > /etc/systemd/system/jenkins.service.d/override.conf <<'CONF'
 [Service]
 Environment="JAVA_OPTS=-Djava.awt.headless=true -Djenkins.install.runSetupWizard=false"
 Environment="JENKINS_LISTEN_ADDRESS=127.0.0.1"
+Environment="KUBECONFIG=/var/lib/jenkins/.kube/config"
 CONF
 
 curl -fsSL https://github.com/jenkinsci/plugin-installation-manager-tool/releases/download/2.13.2/jenkins-plugin-manager-2.13.2.jar \
