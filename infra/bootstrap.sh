@@ -4,6 +4,7 @@
 set -euxo pipefail
 REPO_URL="$1"
 export DEBIAN_FRONTEND=noninteractive
+rm -f /etc/apt/sources.list.d/jenkins.list
 
 apt-get update -y
 apt-get install -y ca-certificates curl git unzip openssl fontconfig openjdk-21-jre-headless docker.io
