@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs Docker, k3s, Jenkins and the three pipeline jobs on an Ubuntu 24.04 EC2 host.
+# Installs Docker, k3s, Jenkins and the three pipeline jobs on an Ubuntu 26.04 EC2 host.
 # Usage: sudo bash bootstrap.sh <git-repo-url>
 set -euxo pipefail
 REPO_URL="$1"
@@ -15,7 +15,7 @@ unzip -q -o /tmp/awscli.zip -d /tmp
 
 curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik --write-kubeconfig-mode 600" sh -
 
-KEY_URL=https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
+KEY_URL=https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key
 curl -fsSL "$KEY_URL" -o /usr/share/keyrings/jenkins-keyring.asc
 echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" \
   > /etc/apt/sources.list.d/jenkins.list
